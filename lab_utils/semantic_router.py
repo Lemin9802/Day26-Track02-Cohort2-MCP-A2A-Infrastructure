@@ -12,21 +12,33 @@ from dataclasses import dataclass
 
 
 def _tokenize(text: str) -> dict[str, float]:
-    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    """Tokenize đơn giản nhưng hỗ trợ cả tiếng Việt có dấu."""
+    tokens = re.findall(r"\w+", text.lower(), flags=re.UNICODE)
     counts: dict[str, float] = {}
+
     for token in tokens:
         counts[token] = counts.get(token, 0.0) + 1.0
+
+        # Tách thêm token có dấu gạch dưới, ví dụ agent_metrics -> agent, metrics
+        if "_" in token:
+            for part in token.split("_"):
+                if part:
+                    counts[part] = counts.get(part, 0.0) + 1.0
+
     return counts
 
 
 def _cosine(a: dict[str, float], b: dict[str, float]) -> float:
     if not a or not b:
         return 0.0
+
     dot = sum(a.get(k, 0.0) * b.get(k, 0.0) for k in set(a) | set(b))
     norm_a = math.sqrt(sum(v * v for v in a.values()))
     norm_b = math.sqrt(sum(v * v for v in b.values()))
+
     if norm_a == 0 or norm_b == 0:
         return 0.0
+
     return dot / (norm_a * norm_b)
 
 
@@ -47,10 +59,12 @@ class SemanticRouter:
     def route(self, request: str, top_k: int = 1) -> list[tuple[str, float]]:
         request_vec = _tokenize(request)
         scored: list[tuple[str, float]] = []
+
         for agent in self.agents:
             corpus = " ".join([agent.description, " ".join(agent.tags)])
             score = _cosine(request_vec, _tokenize(corpus))
             scored.append((agent.name, score))
+
         scored.sort(key=lambda item: item[1], reverse=True)
         return scored[:top_k]
 
@@ -62,5 +76,21 @@ class SemanticRouter:
         candidates = self.route(request, top_k=1)
         if not candidates:
             return fallback
+
         name, score = candidates[0]
         return name if score >= self.threshold else fallback
+
+    def route_with_chain(self, request: str, chain: list[str]) -> str:
+        """Thử route chính; nếu điểm < ngưỡng, đi theo chuỗi fallback."""
+        candidates = self.route(request, top_k=1)
+
+        if candidates:
+            name, score = candidates[0]
+            if score >= self.threshold:
+                return name
+
+        for fallback in chain:
+            if fallback:
+                return fallback
+
+        return "orchestrator"

@@ -98,6 +98,17 @@ async def list_tools() -> list[Tool]:
                 "required": ["text"],
             },
         ),
+        Tool(
+            name="count_words",
+            description="Đếm số từ trong một chuỗi văn bản.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Văn bản cần đếm số từ"},
+                },
+                "required": ["text"],
+            },
+        ),
     ]
     return [tool for tool in all_tools if tool.name in allowed]
 
@@ -122,6 +133,10 @@ def _summarize_text(text: str, max_bullets: int = 3) -> list[str]:
     return [f"- {sentence}" for sentence in sentences[:max_bullets]]
 
 
+def _count_words(text: str) -> int:
+    return len(text.split())
+
+
 @app.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     decision = guard.authorize_mcp_tool(
@@ -132,37 +147,70 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         task_id=GOVERNANCE_TASK_ID,
     )
     if decision.blocked:
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "status": "blocked",
-                "governance": decision.verdict.value,
-                "reason": decision.reason,
-            }, ensure_ascii=False),
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "status": "blocked",
+                        "governance": decision.verdict.value,
+                        "reason": decision.reason,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        ]
+
     if decision.needs_approval:
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "status": "hitl_required",
-                "governance": decision.verdict.value,
-                "reason": decision.reason,
-                "message": "Cần phê duyệt của người trước khi thực thi.",
-            }, ensure_ascii=False),
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "status": "hitl_required",
+                        "governance": decision.verdict.value,
+                        "reason": decision.reason,
+                        "message": "Cần phê duyệt của người trước khi thực thi.",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        ]
 
     if name == "search_documents":
         results = _search_documents(arguments["query"])
-        return [TextContent(type="text", text=json.dumps(results, indent=2, ensure_ascii=False))]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(results, indent=2, ensure_ascii=False),
+            )
+        ]
+
     if name == "sql_query":
         rows = _sql_query(arguments["sql"])
-        return [TextContent(type="text", text=json.dumps(rows, indent=2, ensure_ascii=False))]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(rows, indent=2, ensure_ascii=False),
+            )
+        ]
+
     if name == "summarize_text":
         bullets = _summarize_text(
             arguments["text"],
             int(arguments.get("max_bullets", 3)),
         )
         return [TextContent(type="text", text="\n".join(bullets))]
+
+    if name == "count_words":
+        count = _count_words(arguments["text"])
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"word_count": count}, ensure_ascii=False),
+            )
+        ]
+
     raise ValueError(f"Tool không xác định: {name}")
 
 
